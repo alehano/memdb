@@ -34,6 +34,10 @@ func TestDB(t *testing.T) {
 	id, err := db.Create(item1)
 	assert.Nil(t, err)
 	assert.NotEqual(t, 0, id)
+
+	t.Log("==========")
+	t.Logf("%+v", db.secondaryIdx)
+
 	id, err = db.Create(item2)
 	assert.NotEqual(t, 0, id)
 	assert.Nil(t, err)
