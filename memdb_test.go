@@ -24,7 +24,7 @@ func TestDB(t *testing.T) {
 	db := NewMemDB("db.json")
 	db.AddIndex(indexName)
 
-	t.Log("==========")
+	t.Log("1 ==========")
 	t.Logf("%+v", db.secondaryIdx)
 
 	item1 := myData{Name: "John", Number: 3}
@@ -35,7 +35,7 @@ func TestDB(t *testing.T) {
 	assert.Nil(t, err)
 	assert.NotEqual(t, 0, id)
 
-	t.Log("==========")
+	t.Log("2 ==========")
 	t.Logf("%+v", db.secondaryIdx)
 
 	id, err = db.Create(item2)

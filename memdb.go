@@ -10,11 +10,13 @@ func NewMemDB(filename string) *memDB {
 	mdb := &memDB{
 		mu:           &sync.Mutex{},
 		filename:     filename,
-		idx:          map[int64]int64{},
-		secondaryIdx: map[string]map[interface{}][]int64{},
+		idx:          make(map[int64]int64),
+		secondaryIdx: make(map[string]sIndexes),
 	}
 	return mdb
 }
+
+type sIndexes map[interface{}][]int64
 
 type dbItem struct {
 	Item
@@ -46,7 +48,7 @@ type memDB struct {
 	filename     string
 	items        []dbItem
 	idx          map[int64]int64 // [id]position
-	secondaryIdx map[string]map[interface{}][]int64
+	secondaryIdx map[string]sIndexes
 	maxId        int64
 	lenItems     int64
 }
@@ -157,7 +159,7 @@ func (mdb *memDB) Delete(id int64) error {
 // You should provide GetIndex(name) method on your Item interface implementation
 func (mdb *memDB) AddIndex(name string) error {
 	mdb.mu.Lock()
-	mdb.secondaryIdx[name] = map[interface{}][]int64{}
+	mdb.secondaryIdx[name] = sIndexes{}
 	mdb.mu.Unlock()
 	mdb.reindexSecondary()
 	return nil
@@ -210,8 +212,9 @@ func (mdb *memDB) reindexSecondary() {
 	var val interface{}
 	mdb.mu.Lock()
 	defer mdb.mu.Unlock()
-	mdb.secondaryIdx = map[string]map[interface{}][]int64{}
 	for name := range mdb.secondaryIdx {
+		// clean ids
+		mdb.secondaryIdx[name] = sIndexes{}
 		for _, dbItem := range mdb.items {
 			if !dbItem.deleted {
 				val = dbItem.GetIndex(name)
