@@ -1,6 +1,10 @@
 package memdb
 
-import "sync"
+import (
+	"encoding/gob"
+	"os"
+	"sync"
+)
 
 type Item interface {
 	GetIndex(name string) interface{}
@@ -20,27 +24,27 @@ type sIndexes map[interface{}][]int64
 
 type dbItem struct {
 	Item
-	id      int64
-	deleted bool
+	ID  int64
+	Del bool
 }
 
 func (dbi dbItem) getItem() (Item, error) {
-	if dbi.deleted {
+	if dbi.Del {
 		return nil, ErrIDNotExists
 	}
 	return dbi.Item, nil
 }
 
 func (dbi dbItem) getID() int64 {
-	return dbi.id
+	return dbi.ID
 }
 
 func (dbi dbItem) setID() int64 {
-	return dbi.id
+	return dbi.ID
 }
 
 func (dbi *dbItem) setDeleted() {
-	dbi.deleted = true
+	dbi.Del = true
 }
 
 type memDB struct {
@@ -56,7 +60,7 @@ type memDB struct {
 func (mdb *memDB) Create(item Item) (int64, error) {
 	id := mdb.maxId + 1
 	mdb.mu.Lock()
-	mdb.items = append(mdb.items, dbItem{Item: item, id: id})
+	mdb.items = append(mdb.items, dbItem{Item: item, ID: id})
 	mdb.lenItems++
 	mdb.maxId = id
 	mdb.idx[id] = mdb.lenItems - 1
@@ -85,7 +89,7 @@ func (mdb memDB) GetAll(limit, skip int64) ([]Item, error) {
 	var skipped int64
 	var items []Item
 	for pos := range mdb.items {
-		if !mdb.items[pos].deleted {
+		if !mdb.items[pos].Del {
 			if skipped >= skip {
 				items = append(items, mdb.items[pos].Item)
 				count++
@@ -100,7 +104,7 @@ func (mdb memDB) GetAll(limit, skip int64) ([]Item, error) {
 	return items, nil
 }
 
-func (mdb memDB) GetByIndex(indexName string, value interface{}) ([]Item, error) {
+func (mdb memDB) GetAllByIndex(indexName string, value interface{}) ([]Item, error) {
 	if ids, ok := mdb.secondaryIdx[indexName][value]; ok {
 		var items []Item
 		for _, id := range ids {
@@ -117,8 +121,8 @@ func (mdb memDB) GetByIndex(indexName string, value interface{}) ([]Item, error)
 
 func (mdb memDB) Iterate(fn func(id int64, item Item) (stop bool, err error)) error {
 	for _, dbItem := range mdb.items {
-		if !dbItem.deleted {
-			stop, err := fn(dbItem.id, dbItem.Item)
+		if !dbItem.Del {
+			stop, err := fn(dbItem.ID, dbItem.Item)
 			if err != nil {
 				return err
 			}
@@ -150,9 +154,56 @@ func (mdb *memDB) Delete(id int64) error {
 		return err
 	}
 	mdb.mu.Lock()
-	mdb.items[position].deleted = true
+	mdb.items[position].Del = true
 	mdb.mu.Unlock()
 	return nil
+}
+
+// You have to pass your implementation of Item
+// E.g. SaveDB(myItem{})
+func (mdb *memDB) SaveDB(dataType interface{}) error {
+	if mdb.filename == "" {
+		return ErrFilenameWasntSet
+	}
+
+	f, err := os.Create(mdb.filename)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	gob.Register(dataType)
+	enc := gob.NewEncoder(f)
+
+	mdb.CleanUp()
+
+	mdb.mu.Lock()
+	err = enc.Encode(mdb.items)
+	mdb.mu.Unlock()
+	return err
+}
+
+// You have to pass your implementation of Item
+// E.g. SaveDB(myItem{})
+func (mdb *memDB) LoadDB(dataType interface{}) error {
+	if mdb.filename == "" {
+		return ErrFilenameWasntSet
+	}
+
+	f, err := os.Open(mdb.filename)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	gob.Register(dataType)
+	dec := gob.NewDecoder(f)
+	var dbItems []dbItem
+	err = dec.Decode(&dbItems)
+	mdb.mu.Lock()
+	mdb.items = dbItems
+	mdb.mu.Unlock()
+	mdb.ReindexAll()
+
+	return err
 }
 
 // AddIndex adds secondary index by name
@@ -165,23 +216,22 @@ func (mdb *memDB) AddIndex(name string) error {
 	return nil
 }
 
-func (mdb memDB) SaveDB(pretty bool) error {
-	return nil
-}
-
-func (mdb *memDB) LoadDB() error {
-	return nil
-}
-
 // Clean deleted items
 // Iterate all DB and create a new
 func (mdb *memDB) CleanUp() {
 	newItems := []dbItem{}
 	for _, dbItem := range mdb.items {
-		if !dbItem.deleted {
+		if !dbItem.Del {
 			newItems = append(newItems, dbItem)
 		}
 	}
+	mdb.mu.Lock()
+	mdb.items = newItems
+	mdb.mu.Unlock()
+	mdb.ReindexAll()
+}
+
+func (mdb *memDB) ReindexAll() {
 	mdb.reindex()
 	mdb.reindexSecondary()
 }
@@ -192,8 +242,8 @@ func (mdb *memDB) reindex() {
 	var maxId int64 = 0
 	var lenItems int64 = 0
 	for _, dbItem := range mdb.items {
-		if !dbItem.deleted {
-			id = dbItem.id
+		if !dbItem.Del {
+			id = dbItem.ID
 			lenItems++
 			idx[id] = lenItems - 1
 			if id > maxId {
@@ -201,6 +251,7 @@ func (mdb *memDB) reindex() {
 			}
 		}
 	}
+
 	mdb.mu.Lock()
 	defer mdb.mu.Unlock()
 	mdb.idx = idx
@@ -216,20 +267,15 @@ func (mdb *memDB) reindexSecondary() {
 		// clean ids
 		mdb.secondaryIdx[name] = sIndexes{}
 		for _, dbItem := range mdb.items {
-			if !dbItem.deleted {
+			if !dbItem.Del {
 				val = dbItem.GetIndex(name)
 				if val != nil {
 					mdb.secondaryIdx[name][val] = append(mdb.secondaryIdx[name][val],
-						dbItem.id)
+						dbItem.ID)
 				}
 			}
 		}
 	}
-}
-
-func (mdb memDB) reindexAll() {
-	mdb.reindex()
-	mdb.reindexSecondary()
 }
 
 func (mdb memDB) getPositionByID(id int64) (int64, error) {

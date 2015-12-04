@@ -1,3 +1,5 @@
 .idea/
 memdb.iml
 memdb
+cover.out
+db.gob
