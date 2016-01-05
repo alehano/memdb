@@ -6,5 +6,5 @@ var (
 	ErrNoIDProvided  = errors.New("No ID provided")
 	ErrIDNotExists   = errors.New("ID not exists")
 	ErrIndexNotFound = errors.New("Secondary index not found")
-	ErrFilenameWasntSet = errors.New("DB filename wan't set")
+	ErrFilenameWasntSet = errors.New("DB filename didn't set")
 )
