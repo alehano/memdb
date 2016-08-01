@@ -24,7 +24,6 @@ Example:
         }
     }
     
-    
     db := NewMemDB("/path/to/db/dbname.gob")
     // Set index
     db.AddIndex(indexSlug)

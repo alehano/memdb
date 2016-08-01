@@ -27,7 +27,7 @@ func (md myData) GetIndex(name string) interface{} {
 func TestDB(t *testing.T) {
 	noDb := NewMemDB("")
 	err := noDb.SaveDB(nil)
-	assert.Equal(t, ErrFilenameWasntSet, err)
+	assert.Equal(t, ErrFilenameNotSet, err)
 
 	var dbFile = os.Getenv("GOPATH") + "/src/github.com/alehano/memdb/db.gob"
 	db := NewMemDB(dbFile)

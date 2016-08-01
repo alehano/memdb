@@ -10,8 +10,8 @@ type Item interface {
 	GetIndex(name string) interface{}
 }
 
-func NewMemDB(filename string) *memDB {
-	mdb := &memDB{
+func NewMemDB(filename string) *MemDB {
+	mdb := &MemDB{
 		mu:           &sync.Mutex{},
 		filename:     filename,
 		idx:          make(map[int64]int64),
@@ -47,7 +47,7 @@ func (dbi *dbItem) setDeleted() {
 	dbi.Del = true
 }
 
-type memDB struct {
+type MemDB struct {
 	mu           *sync.Mutex
 	filename     string
 	items        []dbItem
@@ -57,7 +57,7 @@ type memDB struct {
 	lenItems     int64
 }
 
-func (mdb *memDB) Create(item Item) (int64, error) {
+func (mdb *MemDB) Create(item Item) int64 {
 	id := mdb.maxId + 1
 	mdb.mu.Lock()
 	mdb.items = append(mdb.items, dbItem{Item: item, ID: id})
@@ -73,10 +73,10 @@ func (mdb *memDB) Create(item Item) (int64, error) {
 	}
 
 	mdb.mu.Unlock()
-	return id, nil
+	return id
 }
 
-func (mdb memDB) Get(id int64) (Item, error) {
+func (mdb MemDB) Get(id int64) (Item, error) {
 	position, err := mdb.getPositionByID(id)
 	if err != nil {
 		return nil, err
@@ -84,7 +84,7 @@ func (mdb memDB) Get(id int64) (Item, error) {
 	return mdb.items[position].getItem()
 }
 
-func (mdb memDB) GetAll(limit, skip int64) ([]Item, error) {
+func (mdb MemDB) GetAll(limit, skip int64) ([]Item, error) {
 	var count int64
 	var skipped int64
 	var items []Item
@@ -104,7 +104,7 @@ func (mdb memDB) GetAll(limit, skip int64) ([]Item, error) {
 	return items, nil
 }
 
-func (mdb memDB) GetAllByIndex(indexName string, value interface{}) ([]Item, error) {
+func (mdb MemDB) GetAllByIndex(indexName string, value interface{}) ([]Item, error) {
 	if ids, ok := mdb.secondaryIdx[indexName][value]; ok {
 		var items []Item
 		for _, id := range ids {
@@ -119,7 +119,7 @@ func (mdb memDB) GetAllByIndex(indexName string, value interface{}) ([]Item, err
 	return nil, ErrIndexNotFound
 }
 
-func (mdb memDB) Iterate(fn func(id int64, item Item) (stop bool, err error)) error {
+func (mdb MemDB) Iterate(fn func(id int64, item Item) (stop bool, err error)) error {
 	for _, dbItem := range mdb.items {
 		if !dbItem.Del {
 			stop, err := fn(dbItem.ID, dbItem.Item)
@@ -134,7 +134,7 @@ func (mdb memDB) Iterate(fn func(id int64, item Item) (stop bool, err error)) er
 	return nil
 }
 
-func (mdb *memDB) Update(id int64, item Item) error {
+func (mdb *MemDB) Update(id int64, item Item) error {
 	if id == 0 {
 		return ErrNoIDProvided
 	}
@@ -148,7 +148,7 @@ func (mdb *memDB) Update(id int64, item Item) error {
 	return nil
 }
 
-func (mdb *memDB) Delete(id int64) error {
+func (mdb *MemDB) Delete(id int64) error {
 	position, err := mdb.getPositionByID(id)
 	if err != nil {
 		return err
@@ -159,11 +159,13 @@ func (mdb *memDB) Delete(id int64) error {
 	return nil
 }
 
+// TODO: save to io.Writer
+
 // You have to pass your implementation of Item
 // E.g. SaveDB(myItem{})
-func (mdb *memDB) SaveDB(dataType interface{}) error {
+func (mdb *MemDB) SaveDB(dataType interface{}) error {
 	if mdb.filename == "" {
-		return ErrFilenameWasntSet
+		return ErrFilenameNotSet
 	}
 
 	f, err := os.Create(mdb.filename)
@@ -184,9 +186,9 @@ func (mdb *memDB) SaveDB(dataType interface{}) error {
 
 // You have to pass your implementation of Item
 // E.g. SaveDB(myItem{})
-func (mdb *memDB) LoadDB(dataType interface{}) error {
+func (mdb *MemDB) LoadDB(dataType interface{}) error {
 	if mdb.filename == "" {
-		return ErrFilenameWasntSet
+		return ErrFilenameNotSet
 	}
 
 	f, err := os.Open(mdb.filename)
@@ -208,17 +210,16 @@ func (mdb *memDB) LoadDB(dataType interface{}) error {
 
 // AddIndex adds secondary index by name
 // You should provide GetIndex(name) method on your Item interface implementation
-func (mdb *memDB) AddIndex(name string) error {
+func (mdb *MemDB) AddIndex(name string) {
 	mdb.mu.Lock()
 	mdb.secondaryIdx[name] = sIndexes{}
 	mdb.mu.Unlock()
 	mdb.reindexSecondary()
-	return nil
 }
 
 // Clean deleted items
 // Iterate all DB and create a new
-func (mdb *memDB) CleanUp() {
+func (mdb *MemDB) CleanUp() {
 	newItems := []dbItem{}
 	for _, dbItem := range mdb.items {
 		if !dbItem.Del {
@@ -231,12 +232,12 @@ func (mdb *memDB) CleanUp() {
 	mdb.ReindexAll()
 }
 
-func (mdb *memDB) ReindexAll() {
+func (mdb *MemDB) ReindexAll() {
 	mdb.reindex()
 	mdb.reindexSecondary()
 }
 
-func (mdb *memDB) reindex() {
+func (mdb *MemDB) reindex() {
 	idx := map[int64]int64{}
 	var id int64 = 0
 	var maxId int64 = 0
@@ -259,7 +260,7 @@ func (mdb *memDB) reindex() {
 	mdb.lenItems = lenItems
 }
 
-func (mdb *memDB) reindexSecondary() {
+func (mdb *MemDB) reindexSecondary() {
 	var val interface{}
 	mdb.mu.Lock()
 	defer mdb.mu.Unlock()
@@ -278,7 +279,7 @@ func (mdb *memDB) reindexSecondary() {
 	}
 }
 
-func (mdb memDB) getPositionByID(id int64) (int64, error) {
+func (mdb MemDB) getPositionByID(id int64) (int64, error) {
 	if position, ok := mdb.idx[id]; ok {
 		return position, nil
 
